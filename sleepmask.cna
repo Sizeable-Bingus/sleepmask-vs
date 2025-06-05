@@ -11,19 +11,43 @@ sub print_info {
 }
 
 # ===========================================================================
+#                        Sleep Mask Menu Chooser
+# ===========================================================================
+global('$global_sleep_mask');
+$global_sleep_mask = "default-sleepmask";
+
+popup sleep_mask_menu
+{
+    item "Sleepmask selector"
+    {
+        local('$dialog');
+
+        $dialog = dialog("Sleepmask selector", %(slp => $global_sleep_mask), { $global_sleep_mask = $3["slp"]; });
+
+        dialog_description($dialog, "Choose which sleepmask to use for subsequent Beacon payloads");
+        drow_combobox($dialog, "slp", "sleepmasks: ", @("default-sleepmask", "indirectsyscalls-sleepmask", "retaddrspoofing-sleepmask", "draugr-sleepmask"));
+        dbutton_action($dialog, "Update");
+
+        dialog_show($dialog);                                                                                               }
+}
+
+# ===========================================================================
 #                               Sleep Mask
 # ===========================================================================
 print_info("Sleepmask-VS Loaded");
+menubar("Sleepmask", "sleep_mask_menu");
 set BEACON_SLEEP_MASK {
-   local('$arch $handle $data $data_len $path $sm_bof $sm_bof_len');
+   local('$arch $file_name $handle $data $data_len $path $sm_bof $sm_bof_len');
    $arch = $2;   
+
+   $file_name = $global_sleep_mask . "." . $arch . ".o";
 
    # Check the payload architecture.
    if($arch eq "x64") {
-       $path = getFileProper(script_resource("x64"), "Release" ,"sleepmask.x64.o" );
+       $path = getFileProper(script_resource("x64"), "Release", $file_name);
    } 
    else if ($arch eq "x86") {
-       $path = getFileProper(script_resource("Release") ,"sleepmask.x86.o" );
+       $path = getFileProper(script_resource("Release"), $file_name);
    }
    else {
        warn("Error: Unsupported architecture: $arch");
@@ -37,6 +61,7 @@ set BEACON_SLEEP_MASK {
    print_info("Sleepmask - $path length: $data_len bytes");
 
    if ($data_len <= 0) {
+      show_error("WARNING: Sleepmask - Error loading the sleep mask object file - reverting to using the default sleep mask.");
       print_info("Sleepmask - Error loading the sleep mask object file - Reverting to using the default sleep mask.");
       return $null;
    }
@@ -52,3 +77,37 @@ set BEACON_SLEEP_MASK {
 
    return $sm_bof;
 }
+
+# ===========================================================================
+#                               Unit test BOF
+# ===========================================================================
+alias run_beacongate_tests {
+    local('$barch $handle $data $bof');
+
+    # Figure out arch of current session
+    $barch = barch($1);
+
+    # Read in the unit test BOF
+    $file_name = "unit-test-bof" . "." . $barch . ".o";
+    if($barch eq "x64") {
+       $path = getFileProper(script_resource("x64"), "Release", $file_name);
+    }
+    else if ($barch eq "x86") {
+       $path = getFileProper(script_resource("Release"), $file_name);
+    }
+    else {
+       warn("Error: Unsupported architecture: $barch");
+       return $null;
+    }
+    $handle = openf($path);
+    $data = readb($handle, -1);
+    closef($handle);
+
+    btask($1, "Running BeaconGate unit test BOF");
+    beacon_inline_execute($1, $data, "go", $null, $null);
+}
+
+beacon_command_register(
+    "run_beacongate_tests",
+    "Executes a unit test BOF to test a custom call gate implementation in the sleepmask.",
+    "Executes a unit test BOF to test a custom call gate implementation in the sleepmask.");

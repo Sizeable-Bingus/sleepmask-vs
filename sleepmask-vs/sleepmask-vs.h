@@ -1,4 +1,5 @@
 #pragma once
+// Include bof-vs header files
 #include "sleepmask.h"
 
 typedef struct _CUSTOM_USER_DATA {
@@ -11,8 +12,6 @@ typedef struct _EXTC2_SYNC_INFO {
     HANDLE ExtC2SleepEvent;
     HANDLE ExtC2ContinueEvent;
 } EXTC2_SYNC_INFO, * PEXTC2_SYNC_INFO;
-
-ALLOCATED_MEMORY_PURPOSE ExternalC2 = (ALLOCATED_MEMORY_PURPOSE)2000;
 
 typedef enum {
     EXTC2_DLL_NOT_LOADED = -1,
@@ -33,13 +32,19 @@ typedef enum {
 // debug.cpp
 void PrintSleepMaskInfo(PSLEEPMASK_INFO info);
 void PrintAllocatedMemoryRegion(PALLOCATED_MEMORY_REGION memoryRegion);
+void PrintBeaconGateInfo(PFUNCTION_CALL functionCall);
+void PrintSyscallInfo(PBEACON_SYSCALLS info);
+
+// extc2.cpp
+EXTC2_DLL_STATE GetExternalC2DllState(PSLEEPMASK_INFO info, PCUSTOM_USER_DATA customUserData);
+void ExternalC2Sleep(PSLEEPMASK_INFO info, PCUSTOM_USER_DATA customUserData);
 
 // extc2.cpp
 EXTC2_DLL_STATE GetExternalC2DllState(PSLEEPMASK_INFO info, PCUSTOM_USER_DATA customUserData);
 void ExternalC2Sleep(PSLEEPMASK_INFO info, PCUSTOM_USER_DATA customUserData);
 
 // gate.cpp
-void BeaconGateWrapper(PSLEEPMASK_INFO info, PFUNCTION_CALL functionCall);
+void BeaconGateWrapper(PSLEEPMASK_INFO info, PFUNCTION_CALL gateFunction);
 void BeaconGate(PFUNCTION_CALL gateFunction);
 
 // masking.cpp
