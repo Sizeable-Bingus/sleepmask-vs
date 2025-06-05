@@ -1,7 +1,6 @@
-#include <windows.h>
+#include <Windows.h>
+#include "helpers.h"
 
-#include "base\helpers.h"
-#include "sleepmask.h"
 /**
  * For the debug build we want:
  *   a) Include the mock-up layer
@@ -11,12 +10,12 @@
 #ifdef _DEBUG
 #undef DECLSPEC_IMPORT
 #define DECLSPEC_IMPORT
-#include "base\mock.h"
+#include "mock.h"
 #endif
 
 extern "C" {
 #include "beacon.h"
-#include "beacon_gate.h"
+#include "sleepmask.h"
 
 #include "sleepmask-vs.h"
 #include "library\debug.cpp"
@@ -32,23 +31,23 @@ extern "C" {
     * Sleepmask-VS entry point
     *
     * Note: To enable logging for Release builds set ENABLE_LOGGING to
-    * 1 in debug.h.   
+    * 1 in debug.h.
     */
-    void sleep_mask(PSLEEPMASK_INFO info, PFUNCTION_CALL funcCall) {
+    void sleep_mask(PSLEEPMASK_INFO info, PFUNCTION_CALL functionCall) {
         if (info->reason == DEFAULT_SLEEP || info->reason == PIVOT_SLEEP) {
             DLOGF("SLEEPMASK: Sleeping\n");
             SleepMaskWrapper(info);
         }
         else if (info->reason == BEACON_GATE) {
-            DLOGF("SLEEPMASK: Calling %d via BeaconGate\n", funcCall->function);
-            BeaconGateWrapper(info, funcCall);
+            DLOGF("SLEEPMASK: Calling %s via BeaconGate\n", winApiArray[functionCall->function]);
+            BeaconGateWrapper(info, functionCall);
         }
 
         return;
     }
 }
 
-// Define a main function for the debug build
+// Define a main function for the debug build.
 #if defined(_DEBUG) && !defined(_GTEST)
 int main(int argc, char* argv[]) {
     /**
@@ -65,13 +64,13 @@ int main(int argc, char* argv[]) {
             .sleepTimeMs = 5000,
             .runForever = true,
         }
-    );
+        );
 
     /**
     * Beacon Gate Example
-    * 
+    *
     * Note: The GateArg() Macro ensures arguments are the correct size for the architecture
-    */  
+    */
     /*
     FUNCTION_CALL functionCall = bof::mock::createFunctionCallStructure(
         VirtualAlloc, // Function Pointer
@@ -79,7 +78,7 @@ int main(int argc, char* argv[]) {
         TRUE, // Mask Beacon
         4, // Number of Arguments
         GateArg(NULL),  // VirtualAlloc Arg1
-        GateArg(0x1000), // VirtualAlloc Arg2 
+        GateArg(0x1000), // VirtualAlloc Arg2
         GateArg(MEM_RESERVE | MEM_COMMIT), // VirtualAlloc Arg3
         GateArg(PAGE_EXECUTE_READWRITE) // VirtualAlloc Arg4
     );
@@ -99,9 +98,6 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-// Define unit tests
+// The Googletest framework is currently not compatible with clang. Therefore Sleepmask-vs does not provide support for unit tests.
 #elif defined(_GTEST)
-#include <gtest\gtest.h>
-
-TEST(BofTest, Test1) {}
 #endif
