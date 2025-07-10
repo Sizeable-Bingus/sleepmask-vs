@@ -7,6 +7,8 @@ CPP="$(VSAPPIDDIR)..\..\VC\Tools\Llvm\bin\clang-cl.exe"
 CFLAGS=/c /GS- /GF- /std:c++20 /clang:-fno-jump-tables
 DEBUGCFLAGS=/Zi /MTd /D_DEBUG /EHsc /std:c++20
 
+PROCESSOR_ARCHITECTURE=AMD64
+
 !IF "$(PROCESSOR_ARCHITECTURE)" != "x86" && "$(PROCESSOR_ARCHITECTURE)" != "AMD64"
 !ERROR Only x86 and AMD64 architectures are supported or the PROCESSOR_ARCHITECTURE environment variable is not set.
 !ELSEIF "$(PROCESSOR_ARCHITECTURE)" == "AMD64"

