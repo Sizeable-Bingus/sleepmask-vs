@@ -14,7 +14,7 @@ sub print_info {
 #                        Sleep Mask Menu Chooser
 # ===========================================================================
 global('$global_sleep_mask');
-$global_sleep_mask = "default-sleepmask";
+$global_sleep_mask = "draugr-sleepmask";
 
 popup sleep_mask_menu
 {
@@ -25,7 +25,7 @@ popup sleep_mask_menu
         $dialog = dialog("Sleepmask selector", %(slp => $global_sleep_mask), { $global_sleep_mask = $3["slp"]; });
 
         dialog_description($dialog, "Choose which sleepmask to use for subsequent Beacon payloads");
-        drow_combobox($dialog, "slp", "sleepmasks: ", @("default-sleepmask", "indirectsyscalls-sleepmask", "retaddrspoofing-sleepmask", "draugr-sleepmask"));
+        drow_combobox($dialog, "slp", "sleepmasks: ", @("draugr-sleepmask"));
         dbutton_action($dialog, "Update");
 
         dialog_show($dialog);                                                                                               }
