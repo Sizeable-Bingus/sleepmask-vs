@@ -12,15 +12,11 @@ include(getFileProper(script_resource("sleep"), "utils.cna"));
 global('%DEFAULT_CONFIG %SLEEP_MASK_NAMES');
 
 %SLEEP_MASK_NAMES = ohash(
-    none => "Default (Built-in)",
-    default-sleepmask => "Default (SLEEPMASK-VS)",
-    indirectsyscalls-sleepmask => "Indirect Syscalls",
-    retaddrspoofing-sleepmask => "Return Address Spoofing",
     draugr-sleepmask => "Draugr"
 );
 
 %DEFAULT_CONFIG = %(
-   sleepmask => "Default (SLEEPMASK-VS)"
+   sleepmask => "Draugr"
 );
 
 # ------------------------------------

